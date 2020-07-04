@@ -1576,6 +1576,7 @@ Inductive match_cont: composite_env -> type -> nat -> nat -> Clight.cont -> Csha
       linkorder cu prog ->
       transl_function cu.(prog_comp_env) f = OK tf ->
       match_env e te ->
+      align_env le ->
       match_cont cu.(prog_comp_env) (Clight.fn_return f) nbrk' ncnt' k tk ->
       match_cont ce tyret nbrk ncnt
                  (Clight.Kcall id f e le k)
@@ -1615,7 +1616,8 @@ Inductive match_states: Clight.state -> Csharpminor.state -> Prop :=
   | match_returnstate:
       forall res tres k m tk ce
           (MK: match_cont ce tres 0%nat 0%nat k tk)
-          (WT: wt_val res tres),
+          (WT: wt_val res tres)
+          (ALIGN_MEM: align_mem m),
       match_states (Clight.Returnstate res k m)
                    (Returnstate res tk m).
 
@@ -1678,9 +1680,10 @@ Proof.
 - (* set *)
   auto.
 - (* call *)
-  simpl in TR. destruct (classify_fun (typeof e)); monadInv TR.
-  unfold make_funcall.
-  destruct o; auto; destruct Conventions1.return_value_needs_normalization; auto.
+  simpl in TR. unfold make_funcall in TR.
+  destruct (classify_fun (typeof e)); simpl in TR;
+  destruct Conventions1.return_value_needs_normalization; simpl in TR; monadInv TR.
+  destruct o; auto.
 - (* seq *)
   exploit (transl_find_label s0 nbrk ncnt (Clight.Kseq s1 k)); eauto. constructor; eauto.
   destruct (Clight.find_label lbl s0 (Clight.Kseq s1 k)) as [[s' k'] | ].
@@ -1759,6 +1762,20 @@ Proof.
 Qed.
 
 (** The simulation proof *)
+
+(* Goal *)
+(* forall f a l l', bind_parameter_temps f a l = Some l' -> forall i, nth_error a i = l' ! i. *)
+(* Proof. *)
+(*   induction f; intros; simpl. *)
+
+(*   - destruct a; unfold bind_parameter_temps in H; congruence. *)
+(*   - destruct a0; simpl in *. *)
+(*     + simpl in H. destruct a. discriminate. *)
+(*     + destruct a. *)
+(*       destruct (Pos.eq_dec i i0); subst. *)
+(*       eapply IHf in H. *)
+(*       eapply IHf in H. *)
+
 
 Lemma transl_step:
   forall S1 t S2, Clight.step2 ge S1 t S2 ->
@@ -1843,11 +1860,19 @@ Proof.
   monadInv TR. inv MTR. econstructor; split.
   apply plus_one. econstructor. eapply transl_expr_correct; eauto.
   eapply match_states_skip; eauto.
-  admit.
+  pose proof (transl_expr_correct _ LINK _ _ _ _ MENV ALIGN_MEM ALIGN_ENV _ _ H _ EQ).
+
+  unfold align_env in *. intros.
+  destruct (Pos.eq_dec id id0); subst.
+  rewrite PTree.gss in H1. inv H1.
+  inv H0; eauto; destruct cst; discriminate.
+  rewrite PTree.gso in H1; eauto.
 
 - (* call *)
   revert TR. simpl. case_eq (classify_fun (typeof a)); try congruence.
-  intros targs tres cc CF TR. monadInv TR.
+  intros targs tres cc CF TR.
+  unfold make_funcall in TR. simpl in TR.
+  destruct Conventions1.return_value_needs_normalization; monadInv TR.
   exploit functions_translated; eauto. intros (cu' & tfd & FIND & TFD & LINK').
   rewrite H in CF. simpl in CF. inv CF.
   set (sg := {| sig_args := typlist_of_arglist al targs;
@@ -1856,35 +1881,14 @@ Proof.
   assert (SIG: funsig tfd = sg).
   { unfold sg; erewrite typlist_of_arglist_eq by eauto.
     eapply transl_fundef_sig1; eauto. rewrite H3; auto. }
-  assert (EITHER: tk' = tk /\ ts' = Scall optid sg x x0
-               \/ exists id, optid = Some id /\
-                  tk' = tk /\ ts' = Sseq (Scall optid sg x x0)
-                                         (Sset id (make_normalization tres (Evar id)))).
-  { unfold make_funcall in MTR.
-    destruct optid. destruct Conventions1.return_value_needs_normalization.
-    inv MTR. right; exists i; auto.
-    inv MTR; auto.
-    inv MTR; auto. }
-  destruct EITHER as [(EK & ES) | (id & EI & EK & ES)]; rewrite EK, ES.
-  + (* without normalization of return value *)
-    econstructor; split.
-    apply plus_one. eapply step_call; eauto.
-    eapply transl_expr_correct with (cunit := cu); eauto.
-    eapply transl_arglist_correct with (cunit := cu); eauto.
-    econstructor; eauto.
-    eapply match_Kcall with (ce := prog_comp_env cu') (cu := cu); eauto.
-    exact I.
-  + (* with normalization of return value *)
-    subst optid.
-    econstructor; split.
-    eapply plus_two. apply step_seq. eapply step_call; eauto. 
-    eapply transl_expr_correct with (cunit := cu); eauto.
-    eapply transl_arglist_correct with (cunit := cu); eauto.
-    traceEq.
-    econstructor; eauto.
-    eapply match_Kcall_normalize  with (ce := prog_comp_env cu') (cu := cu); eauto.
-    intros. eapply make_normalization_correct; eauto. constructor; eauto. admit.
-    exact I.
+  inv MTR.
+  econstructor; split.
+  apply plus_one. eapply step_call; eauto.
+  eapply transl_expr_correct with (cunit := cu); eauto.
+  eapply transl_arglist_correct with (cunit := cu); eauto.
+  econstructor; eauto.
+  eapply match_Kcall with (ce := prog_comp_env cu') (cu := cu); eauto.
+  exact I.
 
 - (* builtin *)
   monadInv TR.
@@ -1977,6 +1981,7 @@ Proof.
   eapply match_returnstate with (ce := prog_comp_env cu); eauto.
   eapply match_cont_call_cont. eauto.
   constructor.
+  admit.
 
 - (* return some *)
   monadInv TR. inv MTR.
@@ -1987,6 +1992,7 @@ Proof.
   eapply match_returnstate with (ce := prog_comp_env cu); eauto.
   eapply match_cont_call_cont. eauto.
   apply wt_val_casted. eapply cast_val_is_casted; eauto.
+  admit.
 
 - (* skip call *)
   monadInv TR. inv MTR.
@@ -1996,6 +2002,7 @@ Proof.
   eapply match_env_free_blocks; eauto.
   eapply match_returnstate with (ce := prog_comp_env cu); eauto.
   constructor.
+  admit.
 
 - (* switch *)
   monadInv TR.
@@ -2061,6 +2068,8 @@ Proof.
   constructor.
   replace (fn_return f) with tres. eassumption.
   simpl in TY. unfold type_of_function in TY. congruence.
+
+  unfold bind_parameter_temps in H4. simpl in H4.
   admit.
   admit.
 
@@ -2075,6 +2084,7 @@ Proof.
   replace (rettype_of_type tres0) with (sig_res (ef_sig ef)).
   eapply external_call_well_typed_gen; eauto.
   rewrite H5. simpl. simpl in TY. congruence.
+  admit.
 
 - (* returnstate *)
   inv MK.
@@ -2083,14 +2093,12 @@ Proof.
     apply plus_one. constructor.
     econstructor; eauto. simpl; reflexivity. constructor.
     admit.
-    admit.
   + (* with normalization *)
     econstructor; split.
     eapply plus_three. econstructor. econstructor. constructor.
     simpl. apply H13. eauto. apply PTree.gss.
     traceEq.
     simpl. rewrite PTree.set2. econstructor; eauto. simpl; reflexivity. constructor.
-    admit.
     admit.
 Admitted.
 

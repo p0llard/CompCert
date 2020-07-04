@@ -575,13 +575,11 @@ Definition make_normalization (t: type) (a: expr) :=
   end.
 
 Definition make_funcall (x: option ident) (tres: type) (sg: signature)
-                      (fn: expr) (args: list expr): stmt :=
+                      (fn: expr) (args: list expr): res stmt :=
   match x, return_value_needs_normalization sg.(sig_res) with
-  | Some id, true =>
-      Sseq (Scall x sg fn args)
-           (Sset id (make_normalization tres (Evar id)))
+  | _, true => Error (msg "Cshmgen.make_funcall: function call requires normalization")
   | _, _ =>
-      Scall x sg fn args
+      OK (Scall x sg fn args)
   end.
 
 (** * Translation of statements *)
@@ -633,7 +631,7 @@ Fixpoint transl_statement (ce: composite_env) (tyret: type) (nbrk ncnt: nat)
           let sg := {| sig_args := typlist_of_arglist cl args;
                        sig_res  := rettype_of_type res;
                        sig_cc   := cconv |} in
-          OK (make_funcall x res sg tb tcl)
+          make_funcall x res sg tb tcl
       | _ => Error(msg "Cshmgen.transl_stmt(call)")
       end
   | Clight.Sbuiltin x ef tyargs bl =>
