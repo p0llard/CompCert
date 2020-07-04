@@ -1092,11 +1092,12 @@ Qed.
 
 Lemma make_load_correct
       (m : mem)
-      (ALIGN : (forall c a v,
-                 Mem.loadv c m a = Some v ->
-                 forall b p,
-                 v = Vptr b p ->
-                 Ptrofs.unsigned p mod 4 = 0)) :
+      (ALIGN : (forall v b p,
+                 Mem.loadv Mint32 m (Vptr b p) = Some v ->
+                 Ptrofs.unsigned p mod 4 = 0 ->
+                 forall b' p',
+                 v = Vptr b' p' ->
+                 Ptrofs.unsigned p' mod 4 = 0)) :
   forall addr ty code b ofs v e le,
   make_load addr ty = OK code ->
   eval_expr ge e le m addr (Vptr b ofs) ->
@@ -1106,8 +1107,11 @@ Proof.
   unfold make_load; intros until le; intros MKLOAD EVEXP DEREF.
   inv DEREF.
   (* scalar *)
-  rewrite H in MKLOAD. inv MKLOAD. apply eval_Eload with (Vptr b ofs); auto.
+  rewrite H in MKLOAD.
+  destruct chunk; inv MKLOAD; try discriminate.
+  apply eval_Eload with (Vptr b ofs); auto.
   intros. eapply ALIGN; eauto.
+  inv EVEXP; eauto; destruct cst; discriminate.
   (* by reference *)
   rewrite H in MKLOAD. inv MKLOAD. auto.
   (* by copy *)
@@ -1147,6 +1151,7 @@ Proof.
   inversion ASSIGN; subst.
   (* nonvolatile scalar *)
   rewrite H in MKSTORE; inv MKSTORE.
+  destruct chunk; try discriminate. inv H2.
   econstructor; eauto.
   (* by copy *)
   rewrite H in MKSTORE.
@@ -1336,11 +1341,12 @@ Proof.
 Qed.
 
 Definition align_mem m : Prop :=
-  forall c a v,
-  Mem.loadv c m a = Some v ->
-  forall b p,
-  v = Vptr b p ->
-  Ptrofs.unsigned p mod 4 = 0.
+  forall b p v,
+  Mem.loadv Mint32 m (Vptr b p) = Some v ->
+  Ptrofs.unsigned p mod 4 = 0 ->
+  forall b' p',
+  v = Vptr b' p' ->
+  Ptrofs.unsigned p' mod 4 = 0.
 
 Definition align_env le : Prop :=
   forall id v,
@@ -1592,7 +1598,9 @@ Inductive match_states: Clight.state -> Csharpminor.state -> Prop :=
           (TR: transl_statement cu.(prog_comp_env) (Clight.fn_return f) nbrk ncnt s = OK ts)
           (MTR: match_transl ts tk ts' tk')
           (MENV: match_env e te)
-          (MK: match_cont cu.(prog_comp_env) (Clight.fn_return f) nbrk ncnt k tk),
+          (MK: match_cont cu.(prog_comp_env) (Clight.fn_return f) nbrk ncnt k tk)
+          (ALIGN_ENV: align_env le)
+          (ALIGN_MEM: align_mem m),
       match_states (Clight.State f s k e le m)
                    (State tf ts' tk' te le m)
   | match_callstate:
@@ -1616,6 +1624,8 @@ Remark match_states_skip:
   linkorder cu prog ->
   transl_function cu.(prog_comp_env) f = OK tf ->
   match_env e te ->
+  align_env le ->
+  align_mem m ->
   match_cont cu.(prog_comp_env) (Clight.fn_return f) nbrk ncnt k tk ->
   match_states (Clight.State f Clight.Sskip k e le m) (State tf Sskip tk te le m).
 Proof.
@@ -1661,7 +1671,10 @@ Proof.
   auto.
 - (* assign *)
   unfold make_store, make_memcpy in EQ3.
-  destruct (access_mode (typeof e)); monadInv EQ3; auto.
+  destruct (access_mode (typeof e));
+  destruct (access_mode (typeof e0));
+  try (destruct m);
+  monadInv EQ3; auto.
 - (* set *)
   auto.
 - (* call *)
@@ -1761,18 +1774,78 @@ Proof.
   assert (SAME: ts' = ts /\ tk' = tk).
   { inversion MTR. auto.
     subst ts. unfold make_store, make_memcpy in EQ3.
-    destruct (access_mode (typeof a1)); monadInv EQ3; auto. }
+    destruct (access_mode (typeof a1));
+    destruct (access_mode (typeof a2));
+    try destruct m0;
+    monadInv EQ3; auto. }
+  destruct (access_mode (typeof a1)) eqn:?EQ; try discriminate.
   destruct SAME; subst ts' tk'.
   econstructor; split.
   apply plus_one. eapply make_store_correct; eauto.
   eapply transl_lvalue_correct; eauto. eapply make_cast_correct; eauto.
   eapply transl_expr_correct; eauto.
   eapply match_states_skip; eauto.
+  inv H2; try congruence.
+  pose proof (transl_expr_correct _ LINK _ _ _ _ MENV ALIGN_MEM ALIGN_ENV _ _ H0 _ EQ1).
+  unfold make_store in EQ3. rewrite H3 in EQ3. destruct chunk; try discriminate.
+  unfold align_mem. intros.
+  subst.
+  destruct (Val.eq (Vptr loc ofs) (Vptr b p)).
+  inv e0. simpl in *.
+  pose proof (Mem.load_store_same _ _ _ _ _ _ H4).
+  rewrite H5 in H7. inv H7.
+  destruct v; destruct Archi.ptr64; try discriminate.
+  inv H9.
+  unfold sem_cast in H1.
+  repeat lazymatch goal with
+  | [ H : context[match ?x with | _ => _ end] |- _ ] => destruct x
+  end; try discriminate; inv H1.
+
+  inv H2; eauto; destruct cst; discriminate.
+  inv H2; eauto; destruct cst; discriminate.
+  inv H2; eauto; destruct cst; discriminate.
+  inv H2; eauto; destruct cst; discriminate.
+
+  simpl in *.
+  pose proof (Mem.load_store_other _ _ _ _ _ _ H4).
+  rewrite H7 in H5. clear H7. eauto.
+  simpl. assert (loc <> b \/ p <> ofs).
+  destruct (Pos.eq_dec loc b); destruct (Pos.eq_dec loc b); try congruence.
+  right. intro. congruence.
+  left. intro. congruence.
+
+  destruct H8. eauto.
+  right. assert (Ptrofs.unsigned ofs mod 4 = 0).
+  pose proof (transl_lvalue_correct _ LINK _ _ _ _ MENV ALIGN_MEM ALIGN_ENV _ _ _ H _ EQ).
+  inv H9; eauto; destruct cst; discriminate.
+
+  destruct (Z_le_gt_dec (Ptrofs.unsigned ofs + 4) (Ptrofs.unsigned p)); auto.
+  destruct (Z_le_gt_dec (Ptrofs.unsigned p + 4) (Ptrofs.unsigned ofs)); eauto.
+
+  apply Znumtheory.Zmod_divide in H6; try omega.
+  apply Znumtheory.Zmod_divide in H9; try omega.
+  inversion H6 as [x']; subst; clear H6.
+  inversion H9 as [y']; subst; clear H9.
+  rewrite H10 in *. rewrite H6 in *.
+
+  assert (Ptrofs.unsigned p <> Ptrofs.unsigned ofs).
+  intro.
+  destruct H8.
+  assert (Ptrofs.repr (Ptrofs.unsigned p) = Ptrofs.repr (Ptrofs.unsigned ofs)) by congruence.
+  repeat rewrite Ptrofs.repr_unsigned in H8. assumption.
+
+  assert (x' <> y') as NEQ' by omega.
+
+  rewrite <- Z.mul_succ_l in g.
+  rewrite <- Z.mul_succ_l in g0.
+  apply Zmult_gt_reg_r in g;
+    apply Zmult_gt_reg_r in g0; omega.
 
 - (* set *)
   monadInv TR. inv MTR. econstructor; split.
   apply plus_one. econstructor. eapply transl_expr_correct; eauto.
   eapply match_states_skip; eauto.
+  admit.
 
 - (* call *)
   revert TR. simpl. case_eq (classify_fun (typeof a)); try congruence.
@@ -1812,7 +1885,7 @@ Proof.
     traceEq.
     econstructor; eauto.
     eapply match_Kcall_normalize  with (ce := prog_comp_env cu') (cu := cu); eauto.
-    intros. eapply make_normalization_correct; eauto. constructor; eauto.
+    intros. eapply make_normalization_correct; eauto. constructor; eauto. admit.
     exact I.
 
 - (* builtin *)
@@ -1822,6 +1895,8 @@ Proof.
   eapply transl_arglist_correct; eauto.
   eapply external_call_symbols_preserved with (ge1 := ge). apply senv_preserved. eauto.
   eapply match_states_skip; eauto.
+  admit.
+  admit.
 
 - (* seq *)
   monadInv TR. inv MTR.
@@ -1994,7 +2069,9 @@ Proof.
   unfold transl_function. rewrite EQ; simpl. rewrite EQ1; simpl. auto.
   constructor.
   replace (fn_return f) with tres. eassumption.
-  simpl in TY. unfold type_of_function in TY. congruence. 
+  simpl in TY. unfold type_of_function in TY. congruence.
+  admit.
+  admit.
 
 - (* external function *)
   inv TR.
@@ -2014,13 +2091,17 @@ Proof.
     econstructor; split.
     apply plus_one. constructor.
     econstructor; eauto. simpl; reflexivity. constructor.
+    admit.
+    admit.
   + (* with normalization *)
     econstructor; split.
     eapply plus_three. econstructor. econstructor. constructor.
     simpl. apply H13. eauto. apply PTree.gss.
     traceEq.
     simpl. rewrite PTree.set2. econstructor; eauto. simpl; reflexivity. constructor.
-Qed.
+    admit.
+    admit.
+Admitted.
 
 Lemma transl_initial_states:
   forall S, Clight.initial_state prog S ->

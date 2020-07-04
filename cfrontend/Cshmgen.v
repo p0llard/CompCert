@@ -365,7 +365,11 @@ Definition make_cmp (c: comparison) (e1: expr) (ty1: type) (e2: expr) (ty2: type
 
 Definition make_load (addr: expr) (ty_res: type) :=
   match (access_mode ty_res) with
-  | By_value chunk => OK (Eload chunk addr)
+  | By_value chunk =>
+    match chunk with
+    | Mint32 => OK (Eload chunk addr)
+    | _ => Error (msg "Cshmgen.make_load: invalid chunk size")
+    end
   | By_reference => OK addr
   | By_copy => OK addr
   | By_nothing => Error (msg "Cshmgen.make_load")
@@ -386,7 +390,11 @@ Definition make_memcpy (ce: composite_env) (dst src: expr) (ty: type) :=
 
 Definition make_store (ce: composite_env) (addr: expr) (ty: type) (rhs: expr) :=
   match access_mode ty with
-  | By_value chunk => OK (Sstore chunk addr rhs)
+  | By_value chunk =>
+    match chunk with
+    | Mint32 => OK (Sstore chunk addr rhs)
+    | _ => Error (msg "Cshmgen.make_store: invalid chunk size")
+    end
   | By_copy => make_memcpy ce addr rhs ty
   | _ => Error (msg "Cshmgen.make_store")
   end.
@@ -610,7 +618,10 @@ Fixpoint transl_statement (ce: composite_env) (tyret: type) (nbrk ncnt: nat)
       do tb <- transl_lvalue ce b;
       do tc <- transl_expr ce c;
       do tc' <- make_cast (typeof c) (typeof b) tc;
-      make_store ce tb (typeof b) tc'
+      match (access_mode (typeof b)) with
+      | By_value _ => make_store ce tb (typeof b) tc'
+      | _ => Error(msg "Cshmngen.transl_stmt: assign by copy")
+      end
   | Clight.Sset x b =>
       do tb <- transl_expr ce b;
       OK(Sset x tb)
