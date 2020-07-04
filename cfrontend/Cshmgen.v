@@ -706,14 +706,12 @@ Definition transl_function (ce: composite_env) (f: Clight.function) : res functi
        (map fst (Clight.fn_temps f))
        tbody).
 
-Definition transl_fundef (ce: composite_env) (id: ident) (f: Clight.fundef) : res fundef :=
+Definition transl_fundef (p: Clight.program) (ce: composite_env) (id: ident) (f: Clight.fundef) : res fundef :=
   match f with
   | Internal g =>
       do tg <- transl_function ce g; OK(AST.Internal tg)
-  | External ef args res cconv =>
-      if signature_eq (ef_sig ef) (signature_of_type args res cconv)
-      then OK(AST.External ef)
-      else Error(msg "Cshmgen.transl_fundef: wrong external signature")
+  | External _ _ _ _ =>
+      Error(msg "Cshmgen.transl_fundef: external function detected")
   end.
 
 (** ** Translation of programs *)
@@ -721,5 +719,4 @@ Definition transl_fundef (ce: composite_env) (id: ident) (f: Clight.fundef) : re
 Definition transl_globvar (id: ident) (ty: type) := OK tt.
 
 Definition transl_program (p: Clight.program) : res program :=
-  transform_partial_program2 (transl_fundef p.(prog_comp_env)) transl_globvar p.
-
+  transform_partial_program2 (transl_fundef p p.(prog_comp_env)) transl_globvar p.

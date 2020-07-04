@@ -1347,7 +1347,7 @@ let rec convertGlobdecls env res gl =
           | TFun(tres, targs, va, a) ->
               if targs = None then
                 warning Diagnostics.Unnamed "'%s' is declared without a function prototype" id.name;
-              convertGlobdecls env (convertFundecl env d :: res) gl'
+              convertGlobdecls env res gl'
           | _ ->
               convertGlobdecls env (convertGlobvar g.gloc env d :: res) gl'
           end

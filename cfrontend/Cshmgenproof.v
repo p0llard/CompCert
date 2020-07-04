@@ -23,10 +23,7 @@ Require Import Cshmgen.
 Inductive match_fundef (p: Clight.program) : Clight.fundef -> Csharpminor.fundef -> Prop :=
   | match_fundef_internal: forall f tf,
       transl_function p.(prog_comp_env) f = OK tf ->
-      match_fundef p (Ctypes.Internal f) (AST.Internal tf)
-  | match_fundef_external: forall ef args res cc,
-      ef_sig ef = signature_of_type args res cc ->
-      match_fundef p (Ctypes.External ef args res cc) (AST.External ef).
+      match_fundef p (Ctypes.Internal f) (AST.Internal tf).
 
 Definition match_varinfo (v: type) (tv: unit) := True.
 
@@ -42,7 +39,6 @@ Proof.
 - intros. destruct f; simpl in H0.
 + monadInv H0. constructor; auto.
 + destruct (signature_eq (ef_sig e) (signature_of_type t t0 c)); inv H0.
-  constructor; auto.
 - intros; red; auto.
 Qed.
 
@@ -65,7 +61,6 @@ Proof.
 - monadInv H1. simpl. inversion H0.
   unfold signature_of_function, signature_of_type.
   f_equal. apply transl_params_types.
-- simpl in H0. unfold funsig. congruence.
 Qed.
 
 Lemma transl_fundef_sig2:
@@ -1610,6 +1605,7 @@ Inductive match_states: Clight.state -> Csharpminor.state -> Prop :=
           (TR: match_fundef cu fd tfd)
           (MK: match_cont ce tres 0%nat 0%nat k tk)
           (ISCC: Clight.is_call_cont k)
+          (ALIGN_MEM: align_mem m)
           (TY: type_of_fundef fd = Tfunction targs tres cconv),
       match_states (Clight.Callstate fd args k m)
                    (Callstate tfd args tk m)
@@ -1617,6 +1613,7 @@ Inductive match_states: Clight.state -> Csharpminor.state -> Prop :=
       forall res tres k m tk ce
           (MK: match_cont ce tres 0%nat 0%nat k tk)
           (WT: wt_val res tres)
+          (ALIGN_RES: forall b p, res = Vptr b p -> Z.modulo (Ptrofs.unsigned p) 4 = 0)
           (ALIGN_MEM: align_mem m),
       match_states (Clight.Returnstate res k m)
                    (Returnstate res tk m).
@@ -1981,6 +1978,7 @@ Proof.
   eapply match_returnstate with (ce := prog_comp_env cu); eauto.
   eapply match_cont_call_cont. eauto.
   constructor.
+  discriminate.
   admit.
 
 - (* return some *)
@@ -1992,6 +1990,18 @@ Proof.
   eapply match_returnstate with (ce := prog_comp_env cu); eauto.
   eapply match_cont_call_cont. eauto.
   apply wt_val_casted. eapply cast_val_is_casted; eauto.
+
+  pose proof (transl_expr_correct _ LINK _ _ _ _ MENV ALIGN_MEM ALIGN_ENV _ _ H _ EQ).
+  intros.
+  destruct v; unfold sem_cast in H0;
+  repeat lazymatch goal with
+  | [ H : context[match ?x with | _ => _ end] |- _ ] => destruct x
+  end; inv H0; try discriminate; inv H5.
+  inv H2; eauto; destruct cst; discriminate.
+  inv H2; eauto; destruct cst; discriminate.
+  inv H2; eauto; destruct cst; discriminate.
+  inv H2; eauto; destruct cst; discriminate.
+
   admit.
 
 - (* skip call *)
@@ -2002,6 +2012,7 @@ Proof.
   eapply match_env_free_blocks; eauto.
   eapply match_returnstate with (ce := prog_comp_env cu); eauto.
   constructor.
+  discriminate.
   admit.
 
 - (* switch *)
@@ -2069,22 +2080,11 @@ Proof.
   replace (fn_return f) with tres. eassumption.
   simpl in TY. unfold type_of_function in TY. congruence.
 
-  unfold bind_parameter_temps in H4. simpl in H4.
   admit.
   admit.
 
 - (* external function *)
   inv TR.
-  exploit match_cont_is_call_cont; eauto. intros [A B].
-  econstructor; split.
-  apply plus_one. constructor.
-  eapply external_call_symbols_preserved; eauto. apply senv_preserved.
-  eapply match_returnstate with (ce := ce); eauto.
-  apply has_rettype_wt_val. 
-  replace (rettype_of_type tres0) with (sig_res (ef_sig ef)).
-  eapply external_call_well_typed_gen; eauto.
-  rewrite H5. simpl. simpl in TY. congruence.
-  admit.
 
 - (* returnstate *)
   inv MK.
@@ -2115,7 +2115,8 @@ Proof.
   econstructor; split.
   econstructor; eauto. apply (Genv.init_mem_match TRANSL). eauto.
   econstructor; eauto. instantiate (1 := prog_comp_env cu). constructor; auto. exact I.
-Qed.
+  admit.
+Admitted.
 
 Lemma transl_final_states:
   forall S R r,
@@ -2154,14 +2155,7 @@ Local Transparent Ctypes.Linker_program.
 - intros.
 Local Transparent Linker_fundef Linking.Linker_fundef.
   inv H3; inv H4; simpl in H2.
-+ discriminate.
-+ destruct ef; inv H2. econstructor; split. simpl; eauto. left; constructor; auto.
-+ destruct ef; inv H2. econstructor; split. simpl; eauto. right; constructor; auto.
-+ destruct (external_function_eq ef ef0 && typelist_eq args args0 &&
-         type_eq res res0 && calling_convention_eq cc cc0) eqn:E'; inv H2.
-  InvBooleans. subst ef0. econstructor; split.
-  simpl; rewrite dec_eq_true; eauto.
-  left; constructor. congruence.
+discriminate.
 - intros. exists tt. auto.
 - replace (program_of_program p) with pp. auto. inv E; destruct pp; auto.
 Qed.
