@@ -637,8 +637,7 @@ Fixpoint transl_statement (ce: composite_env) (tyret: type) (nbrk ncnt: nat)
       | _ => Error(msg "Cshmgen.transl_stmt(call)")
       end
   | Clight.Sbuiltin x ef tyargs bl =>
-      do tbl <- transl_arglist ce bl tyargs;
-      OK(Sbuiltin x ef tbl)
+      Error (msg "Cshmgen.transl_stmt: builtin not supported")
   | Clight.Ssequence s1 s2 =>
       do ts1 <- transl_statement ce tyret nbrk ncnt s1;
       do ts2 <- transl_statement ce tyret nbrk ncnt s2;

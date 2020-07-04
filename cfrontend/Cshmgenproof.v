@@ -1681,8 +1681,6 @@ Proof.
   simpl in TR. destruct (classify_fun (typeof e)); monadInv TR.
   unfold make_funcall.
   destruct o; auto; destruct Conventions1.return_value_needs_normalization; auto.
-- (* builtin *)
-  auto.
 - (* seq *)
   exploit (transl_find_label s0 nbrk ncnt (Clight.Kseq s1 k)); eauto. constructor; eauto.
   destruct (Clight.find_label lbl s0 (Clight.Kseq s1 k)) as [[s' k'] | ].
@@ -1889,14 +1887,7 @@ Proof.
     exact I.
 
 - (* builtin *)
-  monadInv TR. inv MTR.
-  econstructor; split.
-  apply plus_one. econstructor.
-  eapply transl_arglist_correct; eauto.
-  eapply external_call_symbols_preserved with (ge1 := ge). apply senv_preserved. eauto.
-  eapply match_states_skip; eauto.
-  admit.
-  admit.
+  monadInv TR.
 
 - (* seq *)
   monadInv TR. inv MTR.
