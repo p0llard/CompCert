@@ -952,7 +952,7 @@ Proof.
   destruct (classify_shift tya tyb); inv MAKE;
   destruct va; try discriminate; destruct vb; try discriminate.
 - destruct (Int.ltu i0 Int.iwordsize) eqn:E; inv SEM.
-  econstructor; eauto. simpl; rewrite E; auto.
+  econstructor; eauto with cshm. simpl; rewrite E; auto.
 - destruct (Int64.ltu i0 Int64.iwordsize) eqn:E; inv SEM.
   exploit small_shift_amount_1; eauto. intros [A B].
   econstructor; eauto with cshm. simpl. rewrite A.
@@ -971,9 +971,9 @@ Proof.
   destruct (classify_shift tya tyb); inv MAKE;
   destruct va; try discriminate; destruct vb; try discriminate.
 - destruct (Int.ltu i0 Int.iwordsize) eqn:E; inv SEM.
-  destruct s; inv H0; econstructor; eauto; simpl; rewrite E; auto.
+  destruct s; inv H0; econstructor; eauto with cshm; simpl; rewrite E; auto.
 - destruct (Int64.ltu i0 Int64.iwordsize) eqn:E; inv SEM.
-  exploit small_shift_amount_1; eauto. intros [A B].
+  exploit small_shift_amount_1; eauto with cshm. intros [A B].
   destruct s; inv H0; econstructor; eauto with cshm; simpl; rewrite A;
   f_equal; f_equal.
   unfold Int64.shr', Int64.shr; rewrite B; auto.
@@ -995,9 +995,14 @@ Lemma make_cmp_ptr_correct:
 Proof.
   unfold cmp_ptr, make_cmp_ptr; intros.
   destruct Archi.ptr64.
-- econstructor; eauto.
-- econstructor; eauto. simpl. unfold Val.cmpu.
-  destruct (Val.cmpu_bool (Mem.valid_pointer m) cmp va vb) as [bo|]; inv H. auto.
+- econstructor; eauto with cshm.
+  unfold option_map in H; destruct (Val.cmplu_bool (Mem.valid_pointer m) cmp va vb);
+  unfold Val.of_bool in H; destruct b0; inv H; discriminate.
+- econstructor; eauto with cshm.
+  unfold option_map in H; destruct (Val.cmpu_bool (Mem.valid_pointer m) cmp va vb);
+  unfold Val.of_bool in H; destruct b0; inv H; discriminate.
+  simpl. unfold Val.cmpu.
+  destruct (Val.cmpu_bool (Mem.valid_pointer m) cmp va vb) as [bo|]; inv H; auto.
 Qed.
 
 Remark make_ptrofs_of_int_correct:
@@ -1028,7 +1033,7 @@ Proof.
   intros. unfold Vptrofs. destruct Archi.ptr64 eqn:SF.
 - replace (Ptrofs.to_int64 (Ptrofs.of_int64 i)) with i. auto.
   symmetry. auto with ptrofs.
-- econstructor; eauto. simpl. apply f_equal. apply f_equal.
+- econstructor; eauto with cshm. simpl. apply f_equal. apply f_equal.
   apply Int.eqm_samerepr. rewrite Ptrofs.eqm32 by auto. apply Ptrofs.eqm_unsigned_repr.
 Qed.
 
@@ -1085,17 +1090,24 @@ Proof.
   eapply make_cmp_correct; eauto.
 Qed.
 
-Lemma make_load_correct:
-  forall addr ty code b ofs v e le m,
+Lemma make_load_correct
+      (m : mem)
+      (ALIGN : (forall c a v,
+                 Mem.loadv c m a = Some v ->
+                 forall b p,
+                 v = Vptr b p ->
+                 Ptrofs.unsigned p mod 4 = 0)) :
+  forall addr ty code b ofs v e le,
   make_load addr ty = OK code ->
   eval_expr ge e le m addr (Vptr b ofs) ->
   deref_loc ty m b ofs v ->
   eval_expr ge e le m code v.
 Proof.
-  unfold make_load; intros until m; intros MKLOAD EVEXP DEREF.
+  unfold make_load; intros until le; intros MKLOAD EVEXP DEREF.
   inv DEREF.
   (* scalar *)
   rewrite H in MKLOAD. inv MKLOAD. apply eval_Eload with (Vptr b ofs); auto.
+  intros. eapply ALIGN; eauto.
   (* by reference *)
   rewrite H in MKLOAD. inv MKLOAD. auto.
   (* by copy *)
@@ -1155,10 +1167,10 @@ Proof.
   + econstructor; eauto; simpl; congruence.
 - auto.
 - destruct i.
-  + destruct s; econstructor; eauto. 
-  + destruct s; econstructor; eauto.
+  + destruct s; econstructor; eauto; discriminate.
+  + destruct s; econstructor; eauto; discriminate.
   + auto.
-  + econstructor; eauto.
+  + econstructor; eauto; discriminate.
 Qed.
 
 End CONSTRUCTORS.
@@ -1323,6 +1335,23 @@ Proof.
 - monadInv H0. simpl; congruence.
 Qed.
 
+Definition align_mem m : Prop :=
+  forall c a v,
+  Mem.loadv c m a = Some v ->
+  forall b p,
+  v = Vptr b p ->
+  Ptrofs.unsigned p mod 4 = 0.
+
+Definition align_env le : Prop :=
+  forall id v,
+  le ! id = Some v ->
+  forall b p,
+  v = Vptr b p ->
+  Ptrofs.unsigned p mod 4 = 0.
+
+Hint Unfold align_mem : cshm.
+Hint Unfold align_env : cshm.
+
 (** * Proof of semantic preservation *)
 
 (** ** Semantic preservation for expressions *)
@@ -1356,6 +1385,8 @@ Variable le: temp_env.
 Variable m: mem.
 Variable te: Csharpminor.env.
 Hypothesis MENV: match_env e te.
+Hypothesis ALIGN_MEM: align_mem m.
+Hypothesis ALIGN_ENV: align_env le.
 
 Lemma transl_expr_lvalue_correct:
   (forall a v,
@@ -1377,7 +1408,7 @@ Proof.
 - (* const long *)
   apply make_longconst_correct.
 - (* temp var *)
-  constructor; auto.
+  constructor; eauto with cshm.
 - (* addrof *)
   simpl in TR. auto.
 - (* unop *)
@@ -1405,15 +1436,32 @@ Proof.
 - (* field struct *)
   unfold make_field_access in EQ0. rewrite H1 in EQ0.
   destruct (prog_comp_env cunit)!id as [co'|] eqn:CO; monadInv EQ0.
+  destruct Archi.ptr64 eqn:SF, (Z.eq_dec (x0 mod 4) 0); try discriminate.
   exploit field_offset_stable. eexact LINK. eauto. instantiate (1 := i). intros [A B].
   rewrite <- B in EQ1.
   assert (x0 = delta) by (unfold ge in *; simpl in *; congruence).
   subst x0.
-  destruct Archi.ptr64 eqn:SF.
-+ eapply eval_Ebinop; eauto using make_longconst_correct.
-  simpl. rewrite SF. apply f_equal. apply f_equal. apply f_equal. auto with ptrofs.
-+ eapply eval_Ebinop; eauto using make_intconst_correct.
-  simpl. rewrite SF. apply f_equal. apply f_equal. apply f_equal. auto with ptrofs.
+  inv EQ2.
+  eapply eval_Ebinop; eauto using make_intconst_correct.
+  simpl. intros. inv H4.
+
+  assert (Ptrofs.unsigned ofs mod 4 = 0).
+  { apply H0 in EQ; inv EQ; eauto; destruct cst; discriminate. }
+
+  unfold Ptrofs.add. rewrite Ptrofs.unsigned_repr_eq.
+  rewrite <- Zmod_div_mod; try omega.
+  2: { replace Ptrofs.modulus with 4294967296 by reflexivity; omega. }
+  2: { replace Ptrofs.modulus with 4294967296 by reflexivity;
+       let x := (eval compute in (Z.div 4294967296 4)) in exists x; reflexivity. }
+  rewrite Ptrofs.unsigned_repr_eq.
+  rewrite Zplus_mod. rewrite <- Zmod_div_mod; try omega.
+  2: { replace Ptrofs.modulus with 4294967296 by reflexivity; omega. }
+  2: { replace Ptrofs.modulus with 4294967296 by reflexivity;
+       let x := (eval compute in (Z.div 4294967296 4)) in exists x; reflexivity. }
+  rewrite e0. rewrite H4. reflexivity.
+
+  simpl. rewrite SF.
+  apply f_equal. apply f_equal. apply f_equal. auto with ptrofs.
 - (* field union *)
   unfold make_field_access in EQ0; rewrite H1 in EQ0; monadInv EQ0.
   auto.

@@ -434,9 +434,13 @@ Definition make_field_access (ce: composite_env) (ty: type) (f: ident) (a: expr)
           Error (MSG "Undefined struct " :: CTX id :: nil)
       | Some co =>
           do ofs <- field_offset ce f (co_members co);
-          OK (if Archi.ptr64
-              then Ebinop Oaddl a (make_longconst (Int64.repr ofs))
-              else Ebinop Oadd a (make_intconst (Int.repr ofs)))
+          if Archi.ptr64 then
+            Error (msg "Cshmgen.make_field_access: CompCert compiled in 64bit mode")
+          else
+            if (Z.eq_dec (Z.modulo ofs 4) 0) then
+              OK (Ebinop Oadd a (make_intconst (Int.repr ofs)))
+            else
+             Error (msg "Cshmgen.make_field_access: unaligned struct member")
       end
   | Tunion id _ =>
       OK a
