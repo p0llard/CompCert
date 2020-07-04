@@ -318,6 +318,7 @@ Variable m: mem.
 Inductive eval_expr: expr -> val -> Prop :=
   | eval_Evar: forall id v,
       le!id = Some v ->
+      (forall b p, v = Vptr b p -> Z.modulo (Ptrofs.unsigned p) 4 = 0) ->
       eval_expr (Evar id) v
   | eval_Eaddrof: forall id b,
       eval_var_addr e id b ->
@@ -328,15 +329,18 @@ Inductive eval_expr: expr -> val -> Prop :=
   | eval_Eunop: forall op a1 v1 v,
       eval_expr a1 v1 ->
       eval_unop op v1 = Some v ->
+      (forall b p, v = Vptr b p -> Z.modulo (Ptrofs.unsigned p) 4 = 0) ->
       eval_expr (Eunop op a1) v
   | eval_Ebinop: forall op a1 a2 v1 v2 v,
       eval_expr a1 v1 ->
       eval_expr a2 v2 ->
+      (forall b p, v = Vptr b p -> Z.modulo (Ptrofs.unsigned p) 4 = 0) ->
       eval_binop op v1 v2 m = Some v ->
       eval_expr (Ebinop op a1 a2) v
   | eval_Eload: forall chunk a v1 v,
       eval_expr a v1 ->
       Mem.loadv chunk m v1 = Some v ->
+      (forall b p, v = Vptr b p -> Z.modulo (Ptrofs.unsigned p) 4 = 0) ->
       eval_expr (Eload chunk a) v.
 
 (** Evaluation of a list of expressions:

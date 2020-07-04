@@ -244,27 +244,19 @@ Definition make_binarith (iop iopu fop sop lop lopu: binary_operation)
 Definition make_add_ptr_int (ce: composite_env) (ty: type) (si: signedness) (e1 e2: expr) :=
   do sz <- sizeof ce ty;
   if Archi.ptr64 then
-    let n := make_longconst (Int64.repr sz) in
-    OK (Ebinop Oaddl e1 (Ebinop Omull n (make_longofint e2 si)))
+    Error (msg "Cshmgen.make_add_ptr_int: CompCert compiled in 64bit mode")
   else
     let n := make_intconst (Int.repr sz) in
-    OK (Ebinop Oadd e1 (Ebinop Omul n e2)).
-
-Definition make_add_ptr_long (ce: composite_env) (ty: type) (e1 e2: expr) :=
-  do sz <- sizeof ce ty;
-  if Archi.ptr64 then
-    let n := make_longconst (Int64.repr sz) in
-    OK (Ebinop Oaddl e1 (Ebinop Omull n e2))
-  else
-    let n := make_intconst (Int.repr sz) in
-    OK (Ebinop Oadd e1 (Ebinop Omul n (Eunop Ointoflong e2))).
+    if (Z.eq_dec (Z.modulo sz 4) 0) then
+      OK (Ebinop Oadd e1 (Ebinop Omul n e2))
+    else Error (msg "Cshmgen.make_add_ptr_int: Unaligned type size").
 
 Definition make_add (ce: composite_env) (e1: expr) (ty1: type) (e2: expr) (ty2: type) :=
   match classify_add ty1 ty2 with
   | add_case_pi ty si => make_add_ptr_int ce ty si e1 e2
-  | add_case_pl ty => make_add_ptr_long ce ty e1 e2
   | add_case_ip si ty => make_add_ptr_int ce ty si e2 e1
-  | add_case_lp ty => make_add_ptr_long ce ty e2 e1
+  | add_case_pl _ => Error (msg "Cshmgen.make_add: long not supported")
+  | add_case_lp _ => Error (msg "Cshmgen.make_add: long not supported")
   | add_default => make_binarith Oadd Oadd Oaddf Oaddfs Oaddl Oaddl e1 ty1 e2 ty2
   end.
 
@@ -273,27 +265,20 @@ Definition make_sub (ce: composite_env) (e1: expr) (ty1: type) (e2: expr) (ty2: 
   | sub_case_pi ty si =>
       do sz <- sizeof ce ty;
       if Archi.ptr64 then
-        let n := make_longconst (Int64.repr sz) in
-        OK (Ebinop Osubl e1 (Ebinop Omull n (make_longofint e2 si)))
+        Error (msg "Cshmgen.make_sub: CompCert compiled in 64bit mode")
       else
         let n := make_intconst (Int.repr sz) in
-        OK (Ebinop Osub e1 (Ebinop Omul n e2))
+        if (Z.eq_dec (Z.modulo sz 4) 0) then
+          OK (Ebinop Osub e1 (Ebinop Omul n e2))
+        else Error (msg "Cshmgen.make_sub: Unaligned type size")
   | sub_case_pp ty =>
       do sz <- sizeof ce ty;
       if Archi.ptr64 then
-        let n := make_longconst (Int64.repr sz) in
-        OK (Ebinop Odivl (Ebinop Osubl e1 e2) n)
+        Error (msg "Cshmgen.make_sub: CompCert compiled in 64bit mode")
       else
         let n := make_intconst (Int.repr sz) in
         OK (Ebinop Odiv (Ebinop Osub e1 e2) n)
-  | sub_case_pl ty =>
-      do sz <- sizeof ce ty;
-      if Archi.ptr64 then
-        let n := make_longconst (Int64.repr sz) in
-        OK (Ebinop Osubl e1 (Ebinop Omull n e2))
-      else
-        let n := make_intconst (Int.repr sz) in
-        OK (Ebinop Osub e1 (Ebinop Omul n (Eunop Ointoflong e2)))
+  | sub_case_pl ty => Error (msg "Cshmgen.make_sub: long not supported")
   | sub_default =>
       make_binarith Osub Osub Osubf Osubfs Osubl Osubl e1 ty1 e2 ty2
   end.
